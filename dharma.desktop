@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=dharma mobile
+Exec=sh -c "startx ~/dharma-mobile/.xinitrc"
+Icon=utilities-system-monitor
+Terminal=false
+Categories=System;Utility;
+Keywords=wm;window;manager;mobile;
+NoDisplay=true
+StartupNotify=false

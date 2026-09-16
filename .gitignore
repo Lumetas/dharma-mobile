@@ -1,0 +1,10 @@
+*.o
+dwm
+dharma
+screenshot.jpg
+dwm.png
+*.orig
+*.rej
+kando/
+patches/
+.env

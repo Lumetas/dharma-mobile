@@ -1,0 +1,13 @@
+#!/bin/bash
+
+TOUCH_STATE=$(xinput list-props "$TOUCHSCREEN" | grep "Device Enabled" | cut -d: -f2 | tr -d ' \t')
+
+if [ "$TOUCH_STATE" = "1" ]; then
+    # Экран горит -> гасим
+    xinput disable "$TOUCHSCREEN"
+    xset dpms force off
+else
+    # Экран погашен -> включаем
+    xinput enable "$TOUCHSCREEN"
+    xset dpms force on
+fi

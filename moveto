@@ -1,0 +1,35 @@
+#!/bin/bash
+#
+# scp dharma.c user@192.168.1.110:/home/user/dharma-mobile/dharma.c
+# scp config.h user@192.168.1.110:/home/user/dharma-mobile/config.h
+# scp autostart user@192.168.1.110:/home/user/dharma-mobile/autostart
+# scp keyboard_controls user@192.168.1.110:/home/user/dharma-mobile/keyboard_controls
+# scp power_menu user@192.168.1.110:/home/user/dharma-mobile/power_menu
+# scp screen user@192.168.1.110:/home/user/dharma-mobile/screen
+#
+# ssh user@192.168.1.110 "cd dharma-mobile && make"
+
+
+
+#!/bin/bash
+set -e
+
+HOST="user@192.168.1.110"
+DEST="dharma-mobile/"
+
+rsync -av --update ./ "$HOST:~/$DEST" \
+    --include='dharma.c' \
+    --include='config.h' \
+    --include='autostart' \
+	--include='.xinitrc' \
+    --include='keyboard_controls' \
+	--include='Makefile' \
+	--include='config.mk' \
+	--include='dharma-launcher.c' \
+	--include='launcher_icons.c' \
+	--include='launcher_icons.h' \
+    --include='power_menu' \
+    --include='screen' \
+    --exclude='*'
+
+ssh "$HOST" "cd ~/$DEST && make"

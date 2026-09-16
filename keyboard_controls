@@ -1,0 +1,194 @@
+#!/bin/bash
+
+# ============================================
+# OSD notifier for dharma using dunst (pmOS/BusyBox-friendly)
+# ============================================
+
+TIMEOUT=1000  # миллисекунды
+URGENCY="normal"
+
+# Уникальный ID для обновления одного и того же уведомления
+NOTIFY_ID=8888
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+show_notify() {
+    local name="$1"
+    local percent="$2"
+    local status="$3"
+
+    local text=""
+    local icon=""
+
+    case "$name" in
+        volume)
+            if [ "$status" = "muted" ]; then
+                text="MUTED"
+                icon="audio-volume-muted"
+            elif [ "$status" = "error" ]; then
+                text="ERROR"
+                icon="dialog-error"
+            else
+                text="${percent}%"
+                if [ "${percent:-0}" -lt 30 ]; then
+                    icon="audio-volume-low"
+                elif [ "${percent:-0}" -lt 70 ]; then
+                    icon="audio-volume-medium"
+                else
+                    icon="audio-volume-high"
+                fi
+            fi
+            ;;
+        screen)
+            text="${percent}%"
+            if [ "${percent:-0}" -lt 30 ]; then
+                icon="display-brightness-low"
+            elif [ "${percent:-0}" -lt 70 ]; then
+                icon="display-brightness-medium"
+            else
+                icon="display-brightness-high"
+            fi
+            ;;
+        kbd)
+            text="${percent}%"
+            icon="input-keyboard"
+            ;;
+        *)
+            text="ERROR"
+            icon="dialog-error"
+            ;;
+    esac
+
+    if have dunstify; then
+        if [ "$status" = "muted" ] || [ "$status" = "error" ]; then
+            dunstify -u "$URGENCY" -t "$TIMEOUT" -r "$NOTIFY_ID" \
+                -h string:x-dunst-stack-tag:"$name" "$name: $text"
+        else
+            dunstify -u "$URGENCY" -t "$TIMEOUT" -r "$NOTIFY_ID" \
+                -h string:x-dunst-stack-tag:"$name" \
+                -h int:value:"$percent" "$name: $text"
+        fi
+    elif have notify-send; then
+        notify-send -u "$URGENCY" -t "$TIMEOUT" "$name: $text"
+    fi
+}
+
+# ============================================
+# VOLUME
+# ============================================
+volume_control() {
+    local action="$1"
+    local volume is_muted
+
+    if have pactl && pactl info >/dev/null 2>&1; then
+        case "$action" in
+            +)    pactl set-sink-volume @DEFAULT_SINK@ +5% ;;
+            -)    pactl set-sink-volume @DEFAULT_SINK@ -5% ;;
+            mute) pactl set-sink-mute   @DEFAULT_SINK@ toggle ;;
+        esac
+        volume=$(pactl get-sink-volume @DEFAULT_SINK@ \
+                 | grep -oE '[0-9]+%' | head -1 | tr -d '%')
+        is_muted=$(pactl get-sink-mute @DEFAULT_SINK@ \
+                 | grep -oE 'Mute: (yes|no)' | awk '{print $2}')
+
+    elif have wpctl; then
+        case "$action" in
+            +)    wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+ ;;
+            -)    wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%- ;;
+            mute) wpctl set-mute   @DEFAULT_AUDIO_SINK@ toggle ;;
+        esac
+        local raw
+        raw=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null)
+        volume=$(echo "$raw" | grep -oE '[0-9]+\.[0-9]+' | head -1 \
+                 | awk '{printf "%d", $1*100}')
+        if echo "$raw" | grep -q MUTED; then
+            is_muted="yes"
+        else
+            is_muted="no"
+        fi
+
+    elif have amixer; then
+        case "$action" in
+            +)    amixer -q sset Master 5%+ ;;
+            -)    amixer -q sset Master 5%- ;;
+            mute) amixer -q sset Master toggle ;;
+        esac
+        volume=$(amixer get Master | grep -oE '\[[0-9]+%\]' | head -1 \
+                 | tr -d '[]%')
+        if amixer get Master | grep -q '\[off\]'; then
+            is_muted="yes"
+        else
+            is_muted="no"
+        fi
+    else
+        show_notify "volume" "" "error"
+        return 1
+    fi
+
+    [ -z "$volume" ] && volume=0
+
+    if [ "$is_muted" = "yes" ]; then
+        show_notify "volume" "" "muted"
+    else
+        show_notify "volume" "$volume" "normal"
+    fi
+}
+
+# ============================================
+# SCREEN
+# ============================================
+screen_control() {
+    local action="$1"
+
+    case "$action" in
+        +) brightnessctl set +5% ;;
+        -) brightnessctl set 5%- ;;
+    esac
+
+    local current=$(brightnessctl get)
+    local max=$(brightnessctl max)
+    local percent=$((current * 100 / max))
+
+    show_notify "screen" "$percent" "normal"
+}
+
+# ============================================
+# KBD
+# ============================================
+kbd_control() {
+    local action="$1"
+    local kbd_path="/sys/class/leds/smc::kbd_backlight/brightness"
+
+    [ -f "/sys/class/leds/asus::kbd_backlight/brightness" ] && \
+        kbd_path="/sys/class/leds/asus::kbd_backlight/brightness"
+    [ -f "/sys/class/leds/apple::kbd_backlight/brightness" ] && \
+        kbd_path="/sys/class/leds/apple::kbd_backlight/brightness"
+
+    if [ ! -f "$kbd_path" ]; then
+        show_notify "kbd" "" "error"
+        return
+    fi
+
+    local current=$(cat "$kbd_path")
+    local new=$current
+
+    case "$action" in
+        +) new=$((current + 25)); [ "$new" -gt 255 ] && new=255 ;;
+        -) new=$((current - 25)); [ "$new" -lt 0 ] && new=0 ;;
+    esac
+
+    echo "$new" | tee "$kbd_path" > /dev/null
+    local percent=$((new * 100 / 255))
+
+    show_notify "kbd" "$percent" "normal"
+}
+
+# ============================================
+# MAIN
+# ============================================
+case "$1" in
+    kbd)     kbd_control "$2" ;;
+    screen)  screen_control "$2" ;;
+    volume)  volume_control "$2" ;;
+    *)       show_notify "error" "" "error" ;;
+esac

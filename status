@@ -1,0 +1,36 @@
+#!/bin/bash
+while true
+do
+	# a=$(upower -i /org/freedesktop/UPower/devices/battery_BAT0 | grep perc);
+	# bat=${a//    percentage:          /};
+	bat=$(cat /sys/class/power_supply/BAT0/capacity)%
+	# sound=$(amixer -c 0 sget Master |awk '/Mono:/ {print($6$4)}');
+	time=$(date '+%H:%M > %d');
+	layBool=$(xset -q | sed -rn 's/.*LED mask.*(.)[[:xdigit:]]{3}$/\1/p');
+	if [[ $layBool == 0 ]]; then
+		lay="us"
+	else
+		lay="ru"
+	fi
+
+	day_of_week=$(date +%u)
+
+	if [[ $day_of_week -eq 6 || $day_of_week -eq 7 ]]; then
+		# Если выходные, используем формат "chill : ДД.ММ"
+		weekend_date=$(date '+%m')
+		week_display="chill m.$weekend_date"
+	else
+		if [[ $day_of_week -eq 1 ]]; then
+			monday=$(date -d "monday" +%d.%m 2>/dev/null || date -v-monday +%d.%m 2>/dev/null)
+		else
+			monday=$(date -d "last monday" +%d.%m 2>/dev/null || date -v-monday +%d.%m 2>/dev/null)
+		fi
+		# Если рабочие дни, показываем диапазон недели
+		friday=$(date -d "friday" +%d.%m 2>/dev/null || date -v-friday +%d.%m 2>/dev/null)
+		week_display="$monday-$friday"
+	fi
+
+	xsetroot -name " [$week_display]  [$lay]  [$bat]  [$time] ";
+	# echo -n "$lay | $bat | $time | $week_display";
+	sleep 2;
+done;

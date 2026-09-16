@@ -1,0 +1,13 @@
+#!/bin/bash
+
+BROWSER="google-chrome-stable"
+TERMINAL="namaste"
+EDITOR="nvim"
+
+if [[ -f ~/dharma/.env ]]; then
+    source ~/dharma/.env
+fi
+
+# Запускаем и сразу отсоединяем
+"${!1}" &
+disown

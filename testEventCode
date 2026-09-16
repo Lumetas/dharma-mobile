@@ -1,0 +1,23 @@
+#!/bin/bash
+if [[ "$1" == "ClientTag" ]]; then # Если пришёл ивент о перемещении окна на другой воркспейс
+	window=$(dharmactl window.info $2 | cut -d'|' -f2)
+	if [[ $window == "Navigator, firefox-esr" ]]; then # Если окно это файрфокс
+		dharmactl window.moveToTag $2 1 # переместим окно на тег 1
+	fi
+elif [[ "$1" == "ClientFocus" ]]; then # Если пришёл ивент о фокусе выводим его данные в файл
+	echo "$*" >> ~/eventLog
+elif [[ "$1" == "unregister" ]]; then # Удаляем события в системе
+	dharmactl event.unregister ClientTag "$(realpath $0)"
+	dharmactl event.unregister ClientFocus "$(realpath $0)"
+	echo "unregistered"
+elif [[ "$1" == "register" ]]; then # Регистрируем события в системе dharmactl
+	if [[ -z $(dharmactl event.list | grep -o "$(realpath $0)") ]]; then
+		dharmactl event.register ClientTag "$(realpath $0)"
+		dharmactl event.register ClientFocus "$(realpath $0)"
+		echo "registered"
+		exit 0;
+	else
+		echo "already registered"
+		exit 1;
+	fi
+fi

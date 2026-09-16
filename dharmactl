@@ -1,0 +1,234 @@
+#!/bin/bash
+
+# Функции для работы с тегами (workspace)
+if [ "$1" == "tag.moveTo" ]; then
+	xprop -root -f _NET_CURRENT_DESKTOP 32c -set _NET_CURRENT_DESKTOP $(( $2 - 1 ))
+fi
+
+if [ "$1" == "tag.list" ]; then
+	xprop -root _NET_DESKTOP_NAMES | \
+		grep -o '".*"' | \
+		sed 's/"//g;s/, /\n/g' | \
+		sort -n
+fi
+
+if [ "$1" == "tag.list.count" ]; then
+	xprop -root -notype _NET_NUMBER_OF_DESKTOPS | awk -F '= ' '{print $2}'
+fi
+
+if [ "$1" == "tag.current" ]; then
+	xprop -root -notype _NET_CURRENT_DESKTOP | awk -F '= ' '{print $2 + 1}'
+fi
+
+# Функции для работы с окнами
+if [ "$1" == "window.list" ]; then
+	xprop -root _NET_CLIENT_LIST | grep -o '0x[0-9a-f]*'
+fi
+
+if [ "$1" == "window.list.count" ]; then
+	xprop -root _NET_CLIENT_LIST | grep -o '0x[0-9a-f]*' | wc -l
+fi
+
+if [ "$1" == "window.list.info" ]; then
+	# Получаем список ID окон
+	window_ids=$(xprop -root _NET_CLIENT_LIST | grep -o '0x[0-9a-f]*')
+
+	# Для каждого окна получаем информацию
+	for wid in $window_ids; do
+		# Название окна
+		name=$(xprop -id $wid _NET_WM_NAME 2>/dev/null | grep -o '".*"' | tr -d '"' | head -1)
+		[ -z "$name" ] && name="[No Name]"
+
+		# Класс окна
+		class=$(xprop -id $wid WM_CLASS 2>/dev/null | grep -o '".*"' | tr -d '"' | tail -1)
+		[ -z "$class" ] && class="[Unknown]"
+
+		# ID рабочего стола (-1 если sticky/всегда видимое)
+		desktop=$(xprop -id $wid _NET_WM_DESKTOP 2>/dev/null | grep -o '[0-9-]*$')
+		# Конвертируем в 1-based для вывода
+		if [ "$desktop" != "-1" ] && [ ! -z "$desktop" ]; then
+			desktop=$((desktop + 1))
+		fi
+
+		echo "$wid|$class|$name|$desktop"
+	done
+fi
+
+if [ "$1" == "window.onTag.list" ]; then
+	desktop_id=$(( $2 - 1 ))
+	
+	# Получаем список всех окон
+	window_ids=$(xprop -root _NET_CLIENT_LIST | grep -o '0x[0-9a-f]*')
+	
+	for wid in $window_ids; do
+		# Проверяем, на каком столе окно
+		win_desktop=$(xprop -id $wid _NET_WM_DESKTOP 2>/dev/null | grep -o '[0-9-]*$')
+		
+		# Если окно на указанном столе или sticky (desktop=-1)
+		if [ "$win_desktop" = "$desktop_id" ] || [ "$desktop_id" = "all" -a "$win_desktop" != "" ]; then
+			echo "$wid"
+		fi
+	done
+fi
+
+if [ "$1" == "window.onTag.list.info" ]; then
+	desktop_id=$(( $2 - 1 ))
+
+	# Получаем список всех окон
+	window_ids=$(xprop -root _NET_CLIENT_LIST | grep -o '0x[0-9a-f]*')
+
+	for wid in $window_ids; do
+		# Проверяем, на каком столе окно
+		win_desktop=$(xprop -id $wid _NET_WM_DESKTOP 2>/dev/null | grep -o '[0-9-]*$')
+
+		# Если окно на указанном столе или sticky (desktop=-1)
+		if [ "$win_desktop" = "$desktop_id" ] || [ "$desktop_id" = "all" -a "$win_desktop" != "" ]; then
+			# Название окна
+			name=$(xprop -id $wid _NET_WM_NAME 2>/dev/null | grep -o '".*"' | tr -d '"' | head -1)
+			[ -z "$name" ] && name="[No Name]"
+
+			# Класс окна
+			class=$(xprop -id $wid WM_CLASS 2>/dev/null | grep -o '".*"' | tr -d '"' | tail -1)
+			[ -z "$class" ] && class="[Unknown]"
+
+			# PID процесса (если есть)
+			pid=$(xprop -id $wid _NET_WM_PID 2>/dev/null | grep -o '[0-9]*$')
+			[ -z "$pid" ] && pid="N/A"
+
+			echo "$wid|$class|$name|$pid"
+		fi
+	done
+fi
+
+if [ "$1" == "window.onTag.list.count" ]; then
+	desktop_id=$(( $2 - 1 ))
+	
+	# Получаем список всех окон
+	window_ids=$(xprop -root _NET_CLIENT_LIST | grep -o '0x[0-9a-f]*')
+	count=0
+	
+	for wid in $window_ids; do
+		# Проверяем, на каком столе окно
+		win_desktop=$(xprop -id $wid _NET_WM_DESKTOP 2>/dev/null | grep -o '[0-9-]*$')
+		
+		# Если окно на указанном столе или sticky (desktop=-1)
+		if [ "$win_desktop" = "$desktop_id" ] || [ "$desktop_id" = "all" -a "$win_desktop" != "" ]; then
+			count=$((count + 1))
+		fi
+	done
+	
+	echo $count
+fi
+
+if [ "$1" == "window.info" ]; then
+	wid=$2
+	# Получаем всю информацию об окне в структурированном виде
+	
+	# Название окна
+	name=$(xprop -id $wid _NET_WM_NAME 2>/dev/null | grep -o '".*"' | tr -d '"' | head -1)
+	[ -z "$name" ] && name="[No Name]"
+	
+	# Класс окна
+	class=$(xprop -id $wid WM_CLASS 2>/dev/null | grep -o '".*"' | tr -d '"' | tail -1)
+	[ -z "$class" ] && class="[Unknown]"
+	
+	# PID процесса
+	pid=$(xprop -id $wid _NET_WM_PID 2>/dev/null | grep -o '[0-9]*$')
+	[ -z "$pid" ] && pid="N/A"
+	
+	# Рабочий стол (1-based)
+	desktop=$(xprop -id $wid _NET_WM_DESKTOP 2>/dev/null | grep -o '[0-9-]*$')
+	
+	# Размер и положение
+	geometry=$(xwininfo -id $wid 2>/dev/null | grep -o 'geometry [0-9x+-]*' | cut -d' ' -f2)
+	
+	# Состояние окна
+	state=$(xprop -id $wid _NET_WM_STATE 2>/dev/null | grep -o '_NET_WM_STATE_[A-Z]*')
+
+	echo "$wid|$class|$name|$(($desktop + 1))|$geometry|$state|$pid"
+	
+fi
+
+if [ "$1" == "window.info.tag" ]; then
+	wid=$2
+	# Получаем тег окна (1-based)
+	desktop=$(xprop -id $wid _NET_WM_DESKTOP 2>/dev/null | grep -o '[0-9-]*$')
+	if [ "$desktop" = "-1" ]; then
+		echo "0"  # sticky окна возвращают 0
+	elif [ ! -z "$desktop" ]; then
+		echo $((desktop + 1))
+	else
+		echo "0"
+	fi
+fi
+
+if [ "$1" == "window.kill" ]; then
+	wid=$2
+	# Закрываем окно
+	xkill -id $wid 2>/dev/null || wmctrl -i -c $wid 2>/dev/null || echo "Failed to close window"
+fi
+
+if [ "$1" == "window.moveToTag" ]; then
+	wid=$2
+	tag=$(( $3 - 1 ))
+	
+	xprop -id $wid -f _NET_WM_DESKTOP 32c -set _NET_WM_DESKTOP $tag
+fi
+
+DHARMA_ATOM="_DHARMA_CMD"
+
+if [ "$1" == "event.register" ]; then
+	event_name="$2"
+	script="$3"
+	
+	if [ -z "$event_name" ] || [ -z "$script" ]; then
+		echo "Usage: dharmactl event.register <event_name> <script_path>"
+		exit 1
+	fi
+	
+	xprop -root -f "_DHARMA_REGISTER" 8s -set "_DHARMA_REGISTER" "$script"
+	xprop -root -f "$DHARMA_ATOM" 8s -set "$DHARMA_ATOM" "register $event_name"
+	sleep 0.1
+fi
+
+if [ "$1" == "event.unregister" ]; then
+	event_name="$2"
+	script="$3"
+	
+	if [ -z "$event_name" ] || [ -z "$script" ]; then
+		echo "Usage: dharmactl event.unregister <event_name> <script_path>"
+		exit 1
+	fi
+	
+	xprop -root -f "_DHARMA_UNREGISTER" 8s -set "_DHARMA_UNREGISTER" "$script"
+	xprop -root -f "$DHARMA_ATOM" 8s -set "$DHARMA_ATOM" "unregister $event_name"
+	sleep 0.1
+fi
+
+if [ "$1" == "event.list" ]; then
+	xprop -root -f "$DHARMA_ATOM" 8s -set "$DHARMA_ATOM" "list"
+	sleep 0.1
+	xprop -root "_DHARMA_LIST" | sed 's/.*= "//;s/"$//' | sed 's/\\n/\n/g'
+fi
+
+if [ "$1" == "event.help" ]; then
+	echo "=== dharmactl Event API ==="
+	echo ""
+	echo "Register a script to be executed when an event occurs:"
+	echo "  dharmactl event.register <event_name> <script_path>"
+	echo ""
+	echo "Unregister a script from an event:"
+	echo "  dharmactl event.unregister <event_name> <script_path>"
+	echo ""
+	echo "List all registered event handlers:"
+	echo "  dharmactl event.list"
+	echo ""
+	echo "Available events:"
+	echo "  SwitchTag    - When switching between tags (args: old_tag new_tag)"
+	echo "  ClientTag    - When a window is moved to a tag (args: window_id old_tag new_tag)"
+	echo "  ClientFocus  - When a window gains focus (args: window_id tag)"
+	echo "  ClientUnmanage - When a window is closed (args: window_id)"
+	echo ""
+	echo "Script receives event data as command line arguments:"
+	echo "  script <event_name> <arg1> <arg2> <arg3>"
+fi

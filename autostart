@@ -1,0 +1,17 @@
+#!/bin/bash
+dunst &
+# picom --backend glx &
+feh --bg-scale ~/.wallpapers/bg1.jpg &
+# ( while true; do dmenu_app_list -u && sleep 460; done) &
+# xss-lock ~/dharma/lock &
+# sleep 2 && setxkbmap -option 'ctrl:nocaps' ; setxkbmap 'us,ru' ',winkeys' 'grp:win_space_toggle' &
+# xset r rate 200 50 &
+unclutter-xfixes --timeout 0 --ignore-scrolling --jitter 9999 --hide-on-touch --start-hidden --fork &
+echo "Xft.dpi: 200" | xrdb -merge
+export GDK_SCALE=3
+export GDK_DPI_SCALE=1.0 # Обязательно 1.0, иначе текст увеличится дважды (от xrdb и от GDK_SCALE)
+
+export QT_AUTO_SCREEN_SCALE_FACTOR=0 # Выключаем авто-угадывание, оно на Иксах часто тупит
+export QT_SCREEN_SCALE_FACTORS=3    # Принудительно задаем масштаб 3х для экрана
+export QT_FONT_DPI=200           # Явно прокидываем DPI для шрифтов Qt
+export FORCE_SCALE_FACTOR=3

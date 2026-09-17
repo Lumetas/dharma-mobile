@@ -1,0 +1,13 @@
+#!/bin/bash
+if [[ "$1" == "open" ]]; then
+	echo "open" | dmenu;
+fi
+
+
+
+
+
+if [[ "$1" == "close" ]]; then
+	echo "close" | dmenu;
+fi
+

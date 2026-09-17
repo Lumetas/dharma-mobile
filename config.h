@@ -79,8 +79,13 @@ static const int   swipe_threshold = 100;   /* минимальная длина
 static const int   swipe_right_width     = 20;
 static const int   swipe_right_threshold = 100;
 
-static const char *top_gesture_1[] = { "ls", NULL};
-static const char *top_gesture_2[] = { "tree", NULL};
+static const char *top_gesture_1[] = { "/bin/sh", "-c", "~/dharma-mobile/hot-panel open", NULL};
+static const char *top_gesture_2[] = { "/bin/sh", "-c", "~/dharma-mobile/hot-panel close", NULL};
+static const char **top_gestures[] = {
+	top_gesture_1,
+	// top_gesture_2,
+};
+
 
 /* ==== свайп сверху → toggle fullscreen текущего окна ==== */
 static const int   swipe_top_height    = 40;   /* высота зоны сверху, px (0 = выкл) */

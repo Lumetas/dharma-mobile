@@ -366,11 +366,6 @@ static Visual *bar_visual_argb;
 static Colormap bar_cmap_argb;
 /* configuration, allows nested code to access above variables */
 #include "config.h"
-/* ==== циклические команды верхнего жеста (из config.h) ==== */
-static const char **top_gestures[] = {
-	top_gesture_1,
-	top_gesture_2,
-};
 #define NTOP_GESTURES (sizeof(top_gestures) / sizeof(top_gestures[0]))
 static unsigned int top_gesture_idx = 0;
 

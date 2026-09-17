@@ -18,18 +18,20 @@ HOST="user@192.168.1.110"
 DEST="dharma-mobile/"
 
 rsync -av --update ./ "$HOST:~/$DEST" \
-    --include='dharma.c' \
-    --include='config.h' \
-    --include='autostart' \
-	--include='.xinitrc' \
-    --include='keyboard_controls' \
-	--include='Makefile' \
-	--include='config.mk' \
-	--include='dharma-launcher.c' \
-	--include='launcher_icons.c' \
-	--include='launcher_icons.h' \
-    --include='power_menu' \
-    --include='screen' \
-    --exclude='*'
+	--exclude='*.o' \
+	--exclude='.git/'
+	#    --include='dharma.c' \
+	#    --include='config.h' \
+	#    --include='autostart' \
+	# --include='.xinitrc' \
+	#    --include='keyboard_controls' \
+	# --include='Makefile' \
+	# --include='config.mk' \
+	# --include='dharma-launcher.c' \
+	# --include='launcher_icons.c' \
+	# --include='launcher_icons.h' \
+	#    --include='power_menu' \
+	#    --include='screen' \
+	#    --exclude='*'
 
 ssh "$HOST" "cd ~/$DEST && make"

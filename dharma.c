@@ -153,7 +153,8 @@ struct Monitor {
 	Monitor *next;
 	Window barwin;
 	Window topbarwin;
-	Window swipewin;   /* <-- НОВОЕ: зона свайпа */
+	Window swipewin;
+	Window swipewin_right;
 	const Layout *lt[2];
 };
 
@@ -293,6 +294,10 @@ static int xerror(Display *dpy, XErrorEvent *ee);
 static int xerrordummy(Display *dpy, XErrorEvent *ee);
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static void zoom(const Arg *arg);
+static void handle_tag_longpress_timeout(void);
+static void arm_tag_timer(void);
+static void cancel_tag_timer(void);
+static long now_ms(void);
 static Visual *argb_visual(Display *dpy, int screen);
 static void setstatus(const char *fmt, ...);
 static char* get_battery_icon(int number);
@@ -335,10 +340,22 @@ static Atom dharmaUnregisterAtom;
 static Atom dharmaListAtom;
 static int restart = 0;
 static int running = 1;
-enum { SwipeNone, SwipeLeft, SwipeTop };
+enum { SwipeNone, SwipeLeft, SwipeTop, SwipeRight };
 static int   swipe_which   = SwipeNone;
 static int   swipe_start_x = 0;
 static int   swipe_start_y = 0;
+
+/* циклический счётчик для верхнего жеста */
+
+
+/* long-press по тегу */
+static int   tag_press_active   = 0;
+static int   tag_press_index    = -1;   /* индекс тега, по которому нажали */
+static int   tag_press_x        = 0;    /* для проверки, что палец не уехал */
+static int   tag_press_y        = 0;
+static long  tag_press_start_ms = 0;
+static int   tag_timer_fd       = -1;
+static Client *tag_press_client = NULL; /* окно, которое двигаем по long-press */
 static Cur *cursor[CurLast];
 static Clr **scheme;
 static Display *dpy;
@@ -349,6 +366,13 @@ static Visual *bar_visual_argb;
 static Colormap bar_cmap_argb;
 /* configuration, allows nested code to access above variables */
 #include "config.h"
+/* ==== циклические команды верхнего жеста (из config.h) ==== */
+static const char **top_gestures[] = {
+	top_gesture_1,
+	top_gesture_2,
+};
+#define NTOP_GESTURES (sizeof(top_gestures) / sizeof(top_gestures[0]))
+static unsigned int top_gesture_idx = 0;
 
 /* compile-time check if all tags fit into an unsigned int bit array. */
 struct NumTags { char limitexceeded[LENGTH(tags) > 31 ? -1 : 1]; };
@@ -425,6 +449,81 @@ handle_power_timeout(void)
         power_pending = false;
         spawn(&(Arg){.v = power_single_cmd});
     }
+}
+
+
+static long
+now_ms(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long)ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
+static void
+arm_tag_timer(void)
+{
+	if (tag_timer_fd >= 0)
+		return;
+
+	tag_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+	if (tag_timer_fd < 0)
+		return;
+
+	struct itimerspec its = {0};
+	its.it_value.tv_sec  = tag_longpress_ms / 1000;
+	its.it_value.tv_nsec = (tag_longpress_ms % 1000) * 1000000L;
+	timerfd_settime(tag_timer_fd, 0, &its, NULL);
+}
+
+static void
+cancel_tag_timer(void)
+{
+	if (tag_timer_fd < 0)
+		return;
+	close(tag_timer_fd);
+	tag_timer_fd = -1;
+}
+
+static void
+handle_tag_longpress_timeout(void)
+{
+	if (tag_timer_fd < 0)
+		return;
+
+	uint64_t expirations;
+	while (read(tag_timer_fd, &expirations, sizeof(expirations)) < 0 && errno == EINTR);
+
+	close(tag_timer_fd);
+	tag_timer_fd = -1;
+
+	if (!tag_press_active || tag_press_index < 0) {
+		tag_press_client = NULL;
+		return;
+	}
+
+	/* long-press: переносим окно на другой тег, САМИ остаёмся на текущем */
+	Client *c = tag_press_client;
+	if (c) {
+		unsigned int newtag = 1 << tag_press_index;
+		if (c->tags != newtag) {
+			c->tags = newtag;
+
+			long data[] = { tag_press_index };
+			XChangeProperty(dpy, c->win, netatom[NetWMDesktop],
+			                XA_CARDINAL, 32, PropModeReplace,
+			                (unsigned char *)data, 1);
+			c->ewmhdesktop = tag_press_index;
+
+			/* окно ушло с текущего тега → фокус упадёт на следующее видимое */
+			focus(NULL);
+			arrange(selmon);
+		}
+	}
+
+	tag_press_active = 0;
+	tag_press_index  = -1;
+	tag_press_client = NULL;
 }
 
 static void
@@ -637,6 +736,18 @@ buttonrelease(XEvent *e)
 {
 	XButtonReleasedEvent *ev = &e->xbutton;
 
+	/* long-press по тегу: если таймер ещё не сработал — это был короткий тап */
+	if (tag_press_active) {
+		cancel_tag_timer();
+		tag_press_active = 0;
+		if (tag_press_index >= 0) {
+			Arg a = {.ui = 1 << tag_press_index};
+			view(&a);
+		}
+		tag_press_index  = -1;
+	}
+	tag_press_client = NULL;
+
 	if (swipe_which == SwipeNone)
 		return;
 
@@ -657,12 +768,11 @@ buttonrelease(XEvent *e)
 
 	if (which == SwipeTop) {
 		if (dy >= swipe_top_threshold) {
-			/* свайп вниз — toggle fullscreen */
-			Client *c = selmon->sel;
-			if (c)
-				setfullscreen(c, !c->isfullscreen);
+			if (NTOP_GESTURES > 0) {
+				spawn(&(Arg){ .v = top_gestures[top_gesture_idx] });
+				top_gesture_idx = (top_gesture_idx + 1) % NTOP_GESTURES;
+			}
 		} else {
-			/* тап — пропускаем в топбар: сработает только статус */
 			Monitor *m = selmon;
 			if (!m)
 				return;
@@ -671,6 +781,16 @@ buttonrelease(XEvent *e)
 			if (swid > 0 && barx >= m->ww - swid)
 				spawn(&(Arg){ .v = termcmd });
 		}
+		return;
+	}
+
+	if (which == SwipeRight) {
+		if (-dx >= swipe_right_threshold) {
+			Client *c = selmon->sel;
+			if (c)
+				setfullscreen(c, !c->isfullscreen);
+		}
+		return;
 	}
 }
 
@@ -701,6 +821,16 @@ buttonpress(XEvent *e)
 			             GrabModeAsync, GrabModeAsync,
 			             None, None, CurrentTime);
 			swipe_which   = SwipeTop;
+			swipe_start_x = ev->x_root;
+			swipe_start_y = ev->y_root;
+			return;
+		}
+		if (m->swipewin_right && ev->window == m->swipewin_right) {
+			XGrabPointer(dpy, ev->window, False,
+			             ButtonReleaseMask|PointerMotionMask,
+			             GrabModeAsync, GrabModeAsync,
+			             None, None, CurrentTime);
+			swipe_which   = SwipeRight;
 			swipe_start_x = ev->x_root;
 			swipe_start_y = ev->y_root;
 			return;
@@ -755,6 +885,17 @@ buttonpress(XEvent *e)
 				if (ev->x >= cx && ev->x < cx + tw) {
 					click = ClkTagBar;
 					arg.ui = 1 << vis_tags[ti];
+
+					/* long-press — только для чистого левого клика (без модификаторов) */
+					if (ev->button == Button1 && CLEANMASK(ev->state) == 0) {
+						tag_press_active   = 1;
+						tag_press_index    = vis_tags[ti];
+						tag_press_x        = ev->x_root;
+						tag_press_y        = ev->y_root;
+						tag_press_start_ms = now_ms();
+						tag_press_client   = selmon->sel;
+						arm_tag_timer();
+					}
 					break;
 				}
 				cx += tw + gap;
@@ -779,10 +920,21 @@ buttonpress(XEvent *e)
 		XAllowEvents(dpy, ReplayPointer, CurrentTime);
 		click = ClkClientWin;
 	}
-	for (i = 0; i < LENGTH(buttons); i++)
-		if (click == buttons[i].click && buttons[i].func && buttons[i].button == ev->button
-		&& CLEANMASK(buttons[i].mask) == CLEANMASK(ev->state))
-			buttons[i].func(click == ClkTagBar && buttons[i].arg.i == 0 ? &arg : &buttons[i].arg);
+
+	for (i = 0; i < LENGTH(buttons); i++) {
+		if (click != buttons[i].click || !buttons[i].func
+		    || buttons[i].button != ev->button
+		    || CLEANMASK(buttons[i].mask) != CLEANMASK(ev->state))
+			continue;
+
+		/* обычный левый клик по тегу откладываем до release / long-press-таймера */
+		if (click == ClkTagBar && buttons[i].button == Button1
+		    && CLEANMASK(buttons[i].mask) == 0 && tag_press_active)
+			continue;
+
+		buttons[i].func(click == ClkTagBar && buttons[i].arg.i == 0
+		                ? &arg : &buttons[i].arg);
+	}
 }
 
 void
@@ -852,10 +1004,11 @@ cleanupmon(Monitor *mon)
 		c->ewmhdesktop = 0;
 	}
 
-	if (mon->barwin)       { XUnmapWindow(dpy, mon->barwin);       XDestroyWindow(dpy, mon->barwin); }
-	if (mon->topbarwin)    { XUnmapWindow(dpy, mon->topbarwin);    XDestroyWindow(dpy, mon->topbarwin); }
-	if (mon->swipewin)     { XUnmapWindow(dpy, mon->swipewin);     XDestroyWindow(dpy, mon->swipewin); }
-	if (mon->swipewin_top) { XUnmapWindow(dpy, mon->swipewin_top); XDestroyWindow(dpy, mon->swipewin_top); }
+	if (mon->barwin)         { XUnmapWindow(dpy, mon->barwin);         XDestroyWindow(dpy, mon->barwin); }
+	if (mon->topbarwin)      { XUnmapWindow(dpy, mon->topbarwin);      XDestroyWindow(dpy, mon->topbarwin); }
+	if (mon->swipewin)       { XUnmapWindow(dpy, mon->swipewin);       XDestroyWindow(dpy, mon->swipewin); }
+	if (mon->swipewin_top)   { XUnmapWindow(dpy, mon->swipewin_top);   XDestroyWindow(dpy, mon->swipewin_top); }
+	if (mon->swipewin_right) { XUnmapWindow(dpy, mon->swipewin_right); XDestroyWindow(dpy, mon->swipewin_right); }
 	free(mon);
 }
 
@@ -920,10 +1073,14 @@ configurenotify(XEvent *e)
 				XMoveResizeWindow(dpy, m->topbarwin, m->wx, m->topby, m->ww, bh);
 				if (m->swipewin)
 					XMoveResizeWindow(dpy, m->swipewin,
-					                  m->mx, m->my, swipe_width, m->mh);
+					                  m->mx, m->wy, swipe_width, m->wh);
 				if (m->swipewin_top)
 					XMoveResizeWindow(dpy, m->swipewin_top,
 					                  m->mx, m->my, m->mw, swipe_top_height);
+				if (m->swipewin_right)
+					XMoveResizeWindow(dpy, m->swipewin_right,
+					                  m->mx + m->mw - swipe_right_width, m->wy,
+					                  swipe_right_width, m->wh);
 				raiseswipes(m);
 			}
 			focus(NULL);
@@ -1957,6 +2114,8 @@ raiseswipes(Monitor *m)
 		XRaiseWindow(dpy, m->swipewin);
 	if (m->swipewin_top)
 		XRaiseWindow(dpy, m->swipewin_top);
+	if (m->swipewin_right)
+		XRaiseWindow(dpy, m->swipewin_right);
 }
 void
 restack(Monitor *m)
@@ -1993,7 +2152,7 @@ void
 run(void)
 {
 	XEvent ev;
-	struct pollfd pfds[2];
+	struct pollfd pfds[3];
 	time_t last_status_update = 0;
 	int pollret;
 
@@ -2011,18 +2170,28 @@ run(void)
 			last_status_update = now;
 		}
 
-		/* X-соединение всегда в pfds[0] */
-		pfds[0].fd     = ConnectionNumber(dpy);
-		pfds[0].events = POLLIN;
-		pfds[0].revents = 0;
+		nfds_t nfds = 0;
+		int idx_power = -1, idx_tag = -1;
 
-		/* timerfd — только если взведён */
-		nfds_t nfds = 1;
+		pfds[nfds].fd      = ConnectionNumber(dpy);
+		pfds[nfds].events  = POLLIN;
+		pfds[nfds].revents = 0;
+		nfds++;
+
 		if (power_timer_fd >= 0) {
-			pfds[1].fd     = power_timer_fd;
-			pfds[1].events = POLLIN;
-			pfds[1].revents = 0;
-			nfds = 2;
+			idx_power = nfds;
+			pfds[nfds].fd      = power_timer_fd;
+			pfds[nfds].events  = POLLIN;
+			pfds[nfds].revents = 0;
+			nfds++;
+		}
+
+		if (tag_timer_fd >= 0) {
+			idx_tag = nfds;
+			pfds[nfds].fd      = tag_timer_fd;
+			pfds[nfds].events  = POLLIN;
+			pfds[nfds].revents = 0;
+			nfds++;
 		}
 
 		do {
@@ -2031,8 +2200,10 @@ run(void)
 		if (pollret < 0)
 			break;
 
-		if (pollret > 0 && nfds == 2 && (pfds[1].revents & POLLIN))
+		if (idx_power >= 0 && (pfds[idx_power].revents & POLLIN))
 			handle_power_timeout();
+		if (idx_tag >= 0 && (pfds[idx_tag].revents & POLLIN))
+			handle_tag_longpress_timeout();
 	}
 }
 #include "autostart.h"
@@ -2964,7 +3135,7 @@ updatebars(void)
 					.background_pixel = 0,
 					.border_pixel = 0,
 					.colormap = bar_cmap_argb,
-					.event_mask = ButtonPressMask|ExposureMask
+					.event_mask = ButtonPressMask|ButtonReleaseMask|ExposureMask
 				};
 				m->barwin = XCreateWindow(dpy, root, m->wx, m->by, m->ww, bh, 0, 32,
 						InputOutput, bar_visual_argb,
@@ -2974,7 +3145,7 @@ updatebars(void)
 				XSetWindowAttributes wa_def = {
 					.override_redirect = True,
 					.background_pixmap = ParentRelative,
-					.event_mask = ButtonPressMask|ExposureMask
+					.event_mask = ButtonPressMask|ButtonReleaseMask|ExposureMask
 				};
 				m->barwin = XCreateWindow(dpy, root, m->wx, m->by, m->ww, bh, 0,
 						DefaultDepth(dpy, screen),
@@ -2994,7 +3165,7 @@ updatebars(void)
 					.background_pixel = 0,
 					.border_pixel = 0,
 					.colormap = bar_cmap_argb,
-					.event_mask = ButtonPressMask|ExposureMask
+					.event_mask = ButtonPressMask|ButtonReleaseMask|ExposureMask
 				};
 				m->topbarwin = XCreateWindow(dpy, root, m->wx, m->topby, m->ww, bh, 0, 32,
 						InputOutput, bar_visual_argb,
@@ -3004,7 +3175,7 @@ updatebars(void)
 				XSetWindowAttributes wa_def = {
 					.override_redirect = True,
 					.background_pixmap = ParentRelative,
-					.event_mask = ButtonPressMask|ExposureMask
+					.event_mask = ButtonPressMask|ButtonReleaseMask|ExposureMask
 				};
 				m->topbarwin = XCreateWindow(dpy, root, m->wx, m->topby, m->ww, bh, 0,
 						DefaultDepth(dpy, screen),
@@ -3016,19 +3187,19 @@ updatebars(void)
 			XSetClassHint(dpy, m->topbarwin, &ch);
 		}
 
-		/* --- зона свайпа слева --- */
+		/* --- зона свайпа слева (только между барами) --- */
 		if (swipe_width > 0 && !m->swipewin) {
 			XSetWindowAttributes swa = {
 				.override_redirect = True,
 				.event_mask = ButtonPressMask|ButtonReleaseMask|PointerMotionMask
 			};
 			m->swipewin = XCreateWindow(dpy, root,
-					m->mx, m->my, swipe_width, m->mh, 0,
+					m->mx, m->wy, swipe_width, m->wh, 0,
 					0, InputOnly, CopyFromParent,
 					CWOverrideRedirect|CWEventMask, &swa);
 		}
 
-		/* --- зона свайпа сверху --- */
+		/* --- зона свайпа сверху (от самого верха, поверх верхнего бара) --- */
 		if (swipe_top_height > 0 && !m->swipewin_top) {
 			XSetWindowAttributes swa = {
 				.override_redirect = True,
@@ -3040,11 +3211,25 @@ updatebars(void)
 					CWOverrideRedirect|CWEventMask, &swa);
 		}
 
-		/* порядок поднятия: бар(ы), потом свайпы поверх всего */
+		/* --- зона свайпа справа (только между барами) --- */
+		if (swipe_right_width > 0 && !m->swipewin_right) {
+			XSetWindowAttributes swa = {
+				.override_redirect = True,
+				.event_mask = ButtonPressMask|ButtonReleaseMask|PointerMotionMask
+			};
+			m->swipewin_right = XCreateWindow(dpy, root,
+					m->mx + m->mw - swipe_right_width, m->wy,
+					swipe_right_width, m->wh, 0,
+					0, InputOnly, CopyFromParent,
+					CWOverrideRedirect|CWEventMask, &swa);
+		}
+
 		if (m->swipewin)
 			XMapRaised(dpy, m->swipewin);
 		if (m->swipewin_top)
 			XMapRaised(dpy, m->swipewin_top);
+		if (m->swipewin_right)
+			XMapRaised(dpy, m->swipewin_right);
 	}
 }
 
@@ -3352,7 +3537,8 @@ wintomon(Window w)
 		return recttomon(x, y, 1, 1);
 	for (m = mons; m; m = m->next)
 		if (w == m->barwin || w == m->topbarwin
-		 || w == m->swipewin || w == m->swipewin_top)
+		 || w == m->swipewin || w == m->swipewin_top
+		 || w == m->swipewin_right)
 			return m;
 	if ((c = wintoclient(w)))
 		return c->mon;

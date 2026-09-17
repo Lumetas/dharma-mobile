@@ -76,6 +76,12 @@ static const char *actionbtn_cmd[] = { "/bin/sh", "-c",
 static const int   swipe_width     = 20;    /* ширина сенсорной зоны, px (0 = выкл) */
 static const int   swipe_threshold = 100;   /* минимальная длина свайпа вправо, px */
 
+static const int   swipe_right_width     = 20;
+static const int   swipe_right_threshold = 100;
+
+static const char *top_gesture_1[] = { "ls", NULL};
+static const char *top_gesture_2[] = { "tree", NULL};
+
 /* ==== свайп сверху → toggle fullscreen текущего окна ==== */
 static const int   swipe_top_height    = 40;   /* высота зоны сверху, px (0 = выкл) */
 static const int   swipe_top_threshold = 80;   /* мин. длина свайпа вниз, px */
@@ -83,7 +89,7 @@ static const int   swipe_top_threshold = 80;   /* мин. длина свайп�
 static const char *swipe_cmd[]     = { "/bin/sh", "-c",
 	"xdotool key Escape", NULL };              /* что выполнить при свайпе */
 static const char *barlabel   = " M ";        /* что видно на кнопке */
-
+static const int   tag_longpress_ms = 500;  /* длительность удержания, мс */
 /* Правые кнопки */
 static const char *closebtn_label = " X ";     /* крест */
 static const char *kbdbtn_label   = " K";     /* клавиатура */

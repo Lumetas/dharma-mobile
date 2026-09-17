@@ -1,7 +1,7 @@
 #!/bin/bash
-systemctl --user stop  dharma-wake-daemon 1>/dev/null
-systemctl --user set-environment TOUCHSCREEN="$TOUCHSCREEN" DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY"
-systemctl --user start dharma-wake-daemon
+# systemctl --user stop  dharma-wake-daemon 1>/dev/null
+# systemctl --user set-environment TOUCHSCREEN="$TOUCHSCREEN" DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY"
+# systemctl --user start dharma-wake-daemon
 
 dunst &
 # picom --backend glx &

@@ -41,6 +41,13 @@ static const char col_text_dim[] = "#246f8b";
 void EnvConfig() { 
 	setenv("MOZ_USE_XINPUT2", "1", 1);
 	setenv("TOUCHSCREEN", "generic ft5x06 (51)", 1);
+	setenv("GDK_SCALE", "3", 1);
+	setenv("GDK_DPI_SCALE", "1.0", 1);
+	setenv("QT_AUTO_SCREEN_SCALE_FACTOR", "0", 1);
+	setenv("QT_SCREEN_SCALE_FACTORS", "3", 1);
+	setenv("QT_FONT_DPI", "200", 1);
+	setenv("FORCE_SCALE_FACTOR", "3", 1);
+	setenv("QT_QPA_PLATFORM", "xcb", 1);
 }
 
 

@@ -40,9 +40,8 @@
 
 #define FONT_FAMILY         "sans"
 
-/* скорость анимации */
+/* скорость сглаживания (только для программных скроллов/анимации) */
 #define ANIM_SPEED          0.35
-#define SCROLL_VEL_DECAY    0.92
 
 /* цвета */
 #define COL_BG_R 0.118
@@ -55,22 +54,22 @@
 #define COL_SEL_G 0.196
 #define COL_SEL_B 0.267
 
-/* --- масштаб (заполняется в main) --- */
-static double ui_scale = 0.1;
+/* --- масштаб --- */
+static double ui_scale = 1.0;
 
-static int   s_pad;
-static int   s_tile_gap;
-static int   s_icon_size;
-static int   s_label_h;
-static int   s_top_bar_h;
-static int   s_font_label;
-static int   s_font_fallback;
-static int   s_font_empty;
-static int   s_knob_w;
-static int   s_knob_h;
-static int   s_knob_y;
-static int   s_radius_tile;
-static int   s_radius_knob;
+static int s_pad;
+static int s_tile_gap;
+static int s_icon_size;
+static int s_label_h;
+static int s_top_bar_h;
+static int s_font_label;
+static int s_font_fallback;
+static int s_font_empty;
+static int s_knob_w;
+static int s_knob_h;
+static int s_knob_y;
+static int s_radius_tile;
+static int s_radius_knob;
 
 static void
 apply_scale(void)
@@ -102,11 +101,13 @@ typedef struct {
 static Display *dpy;
 static int screen;
 static Window root, win;
+static Pixmap backbuf = None;      /* offscreen буфер */
+static GC     bufgc   = NULL;
 static int sw, sh;
 static Visual *visual;
 static Colormap cmap;
 static int depth;
-static cairo_surface_t *surface;
+static cairo_surface_t *surface;   /* cairo surface поверх backbuf */
 static cairo_t *cr;
 
 static Tile *tiles = NULL;
@@ -115,7 +116,6 @@ static int cols = 4;
 
 static double scroll_y = 0;
 static double scroll_target = 0;
-static double scroll_vel = 0;
 static double content_h = 0;
 
 static int dragging = 0;
@@ -287,12 +287,14 @@ render(void)
         cairo_show_text(cr, msg);
     }
 
-    if (closing && close_anim > 0) {
+    if (closing && close_anim > 0 && close_anim < 1.0) {
         cairo_set_source_rgba(cr, 0, 0, 0, 1.0 - close_anim);
         cairo_paint(cr);
     }
 
+    /* сброс cairo -> копируем весь backbuf в окно одним XCopyArea */
     cairo_surface_flush(surface);
+    XCopyArea(dpy, backbuf, win, bufgc, 0, 0, sw, sh, 0, 0);
     XFlush(dpy);
 }
 
@@ -355,6 +357,19 @@ load_tiles(void)
     layout_tiles();
 }
 
+/* --- клампы --- */
+
+static void
+clamp_scroll(void)
+{
+    double max_scroll = content_h - sh;
+    if (max_scroll < 0) max_scroll = 0;
+    if (scroll_target < 0) scroll_target = 0;
+    if (scroll_target > max_scroll) scroll_target = max_scroll;
+    if (scroll_y < 0) scroll_y = 0;
+    if (scroll_y > max_scroll) scroll_y = max_scroll;
+}
+
 /* --- события --- */
 
 static void
@@ -363,10 +378,9 @@ handle_button_press(XButtonEvent *e)
     if (e->button != Button1) return;
 
     drag_start_y = e->y;
-    drag_start_scroll = scroll_target;
+    drag_start_scroll = scroll_y; /* 1:1 с текущей позицией, без отдельного target-а */
     dragging = 1;
     drag_moved = 0;
-    scroll_vel = 0;
 
     if (e->y < s_top_bar_h && scroll_y < 5) {
         dragging = 2;
@@ -384,6 +398,9 @@ handle_motion(XMotionEvent *e)
             closing = 1;
             close_anim = 1.0 - (dy - 50) / 200.0;
             if (close_anim < 0) close_anim = 0;
+        } else {
+            closing = 0;
+            close_anim = 0;
         }
         render();
         return;
@@ -391,7 +408,9 @@ handle_motion(XMotionEvent *e)
 
     int dy = e->y - drag_start_y;
     if (abs(dy) > 8) drag_moved = 1;
+
     scroll_target = drag_start_scroll - dy;
+    clamp_scroll();
     scroll_y = scroll_target;
     render();
 }
@@ -408,11 +427,12 @@ handle_button_release(XButtonEvent *e)
         }
         dragging = 0;
         closing = 0;
+        close_anim = 0;
         render();
         return;
     }
 
-    if (!drag_moved) {
+    if (!drag_moved && dragging == 1) {
         int tx = e->x;
         int ty = e->y + (int)scroll_y;
         for (int i = 0; i < ntiles; i++) {
@@ -424,11 +444,10 @@ handle_button_release(XButtonEvent *e)
             }
         }
         exit(0);
-    } else {
-        scroll_vel = -(e->y - drag_start_y) * 0.15;
     }
 
     dragging = 0;
+    /* никакой инерции — просто останавливаемся */
 }
 
 static void
@@ -445,29 +464,36 @@ handle_key(XKeyEvent *e)
 static void
 tick_animation(void)
 {
-    int need_render = 0;
-
-    if (fabs(scroll_vel) > 0.5) {
-        scroll_target += scroll_vel;
-        scroll_vel *= SCROLL_VEL_DECAY;
-        need_render = 1;
-    } else {
-        scroll_vel = 0;
-    }
-
+    /* плавно подтягиваем scroll_y к scroll_target, если они разошлись
+       (например, после resize или клампа). Драг двигает 1:1, поэтому
+       тут во время драга ничего не происходит. */
     if (fabs(scroll_target - scroll_y) > 0.5) {
         scroll_y += (scroll_target - scroll_y) * ANIM_SPEED;
-        need_render = 1;
-    } else {
+        render();
+    } else if (scroll_y != scroll_target) {
         scroll_y = scroll_target;
+        render();
     }
+}
 
-    double max_scroll = content_h - sh;
-    if (max_scroll < 0) max_scroll = 0;
-    if (scroll_target < 0) { scroll_target = 0; scroll_vel = 0; }
-    if (scroll_target > max_scroll) { scroll_target = max_scroll; scroll_vel = 0; }
+/* --- буфер --- */
 
-    if (need_render) render();
+static void
+recreate_buffer(int w, int h)
+{
+    if (cr)      { cairo_destroy(cr);        cr = NULL; }
+    if (surface) { cairo_surface_destroy(surface); surface = NULL; }
+    if (backbuf != None) { XFreePixmap(dpy, backbuf); backbuf = None; }
+
+    backbuf = XCreatePixmap(dpy, win, w, h, depth);
+    surface = cairo_xlib_surface_create(dpy, backbuf, visual, w, h);
+    cairo_status_t st = cairo_surface_status(surface);
+    if (st != CAIRO_STATUS_SUCCESS)
+        die(cairo_status_to_string(st));
+    cr = cairo_create(surface);
+    st = cairo_status(cr);
+    if (st != CAIRO_STATUS_SUCCESS)
+        die(cairo_status_to_string(st));
 }
 
 /* --- main --- */
@@ -482,7 +508,6 @@ main(int argc, char *argv[])
     dpy = XOpenDisplay(NULL);
     if (!dpy) die("cannot open display");
 
-    /* масштаб из Xft.dpi (по умолчанию 96 = 1.0) */
     double dpi = get_xft_dpi();
     ui_scale = dpi / 96.0;
     if (ui_scale < 0.5) ui_scale = 0.5;
@@ -514,21 +539,18 @@ main(int argc, char *argv[])
 
     XStoreName(dpy, win, "dharma-launcher");
 
-    surface = cairo_xlib_surface_create(dpy, win, visual, sw, sh);
-    cairo_status_t st = cairo_surface_status(surface);
-    if (st != CAIRO_STATUS_SUCCESS)
-        die(cairo_status_to_string(st));
+    bufgc = XCreateGC(dpy, win, 0, NULL);
 
-    cr = cairo_create(surface);
-    st = cairo_status(cr);
-    if (st != CAIRO_STATUS_SUCCESS)
-        die(cairo_status_to_string(st));
+    recreate_buffer(sw, sh);
 
     load_tiles();
 
     XMapRaised(dpy, win);
+    XSync(dpy, False);   /* окно реально замаплено — теперь grab сработает */
+
     XSetInputFocus(dpy, win, RevertToPointerRoot, CurrentTime);
     XGrabKeyboard(dpy, win, True, GrabModeAsync, GrabModeAsync, CurrentTime);
+    XSync(dpy, False);
 
     render();
 
@@ -549,8 +571,9 @@ main(int argc, char *argv[])
                 if (ev.xconfigure.width != sw || ev.xconfigure.height != sh) {
                     sw = ev.xconfigure.width;
                     sh = ev.xconfigure.height;
-                    cairo_xlib_surface_set_size(surface, sw, sh);
+                    recreate_buffer(sw, sh);
                     layout_tiles();
+                    clamp_scroll();
                     render();
                 }
                 break;

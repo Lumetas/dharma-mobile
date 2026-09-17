@@ -1,13 +1,80 @@
 #!/bin/bash
-if [[ "$1" == "open" ]]; then
-	echo "open" | dmenu;
-fi
 
+DMENUCMD="${DMENUCMD:-dmenu}"
+DMENUARGS=(-nb '#000000' -sb '#000000' -nf '#d6b8a1' -sf '#d6b8a1' -l 31 -fn 'Fira Code Nerd:size=20' -Y '-80')
 
+# ---------- actions ----------
 
+brightness() {
+	brightnessctl set $1;
+}
 
+wifi_toggle() { nmcli radio wifi toggle 2>/dev/null; }
 
-if [[ "$1" == "close" ]]; then
-	echo "close" | dmenu;
-fi
+wifi_list() {
+    local ssid pass
+    ssid=$(nmcli -t -f SSID dev wifi list 2>/dev/null | grep -v '^$' | sort -u \
+        | "$DMENUCMD" "${DMENUARGS[@]}" -p 'сеть:')
+    [ -z "$ssid" ] && return
+    pass=$(printf '' | "$DMENUCMD" "${DMENUARGS[@]}" -p 'пароль:')
+    [ -n "$pass" ] && nmcli dev wifi connect "$ssid" password "$pass" 2>/dev/null
+}
 
+logout() {
+	answer=$(echo -e "Continue\nCancel" | $DMENUCMD "${DMENUARGS[@]}");
+	if [[ "$answer" == "Continue" ]]; then pkill dharma; fi
+}
+
+# ---------- меню ----------
+
+menu_open() {
+    local choice
+    choice=$(printf '%s\n' \
+        '🔆 Яркость' \
+        '🔊 Громкость' \
+        '📶 Wi-Fi' \
+        '🚪 Выход из сессии' \
+        | "$DMENUCMD" "${DMENUARGS[@]}")
+
+    case "$choice" in
+        '🔆 Яркость')
+            choice=$(printf '%s\n' '10%' '20%' '30%' '40%' '50%' '60%' '70%' '80%' '90%' '100%' \
+                | "$DMENUCMD" "${DMENUARGS[@]}")
+			brightness $choice
+            ;;
+        '🔊 Громкость')
+            choice=$(printf '%s\n' '⬆️ +5%' '⬇️ -5%' '🔇 mute' '50%' '100%' \
+                | "$DMENUCMD" "${DMENUARGS[@]}")
+            case "$choice" in
+                '⬆️ +5%') volume up ;;
+                '⬇️ -5%') volume down ;;
+                '🔇 mute') volume mute ;;
+                '50%')  volume 50 ;;
+                '100%') volume 100 ;;
+            esac
+            ;;
+        '📶 Wi-Fi')
+            choice=$(printf '%s\n' '🔄 toggle' '📡 список сетей' \
+                | "$DMENUCMD" "${DMENUARGS[@]}")
+            case "$choice" in
+                '🔄 toggle')      wifi_toggle ;;
+                '📡 список сетей') wifi_list ;;
+            esac
+            ;;
+        '🚪 Выход из сессии')  logout ;;
+    esac
+}
+
+menu_close() {
+    # тут можно закрыть уже открытый dmenu, если ты его держишь через FIFO,
+    # или просто вызвать пустой dmenu, который сразу закроется Esc'ом
+    printf '' | "$DMENUCMD" "${DMENUARGS[@]}"
+}
+
+# ---------- entrypoint ----------
+
+case "$1" in
+    open)  menu_open  ;;
+    close) menu_close ;;
+    *)     echo "usage: $0 {open|close}" >&2; exit 1 ;;
+esac

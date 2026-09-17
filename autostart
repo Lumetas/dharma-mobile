@@ -1,4 +1,8 @@
 #!/bin/bash
+systemctl --user stop  dharma-wake-daemon 1>/dev/null
+systemctl --user set-environment TOUCHSCREEN="$TOUCHSCREEN" DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY"
+systemctl --user start dharma-wake-daemon
+
 dunst &
 # picom --backend glx &
 feh --bg-scale ~/.wallpapers/bg1.jpg &
@@ -8,10 +12,3 @@ feh --bg-scale ~/.wallpapers/bg1.jpg &
 # xset r rate 200 50 &
 unclutter-xfixes --timeout 0 --ignore-scrolling --jitter 9999 --hide-on-touch --start-hidden --fork &
 echo "Xft.dpi: 200" | xrdb -merge
-export GDK_SCALE=3
-export GDK_DPI_SCALE=1.0 # Обязательно 1.0, иначе текст увеличится дважды (от xrdb и от GDK_SCALE)
-
-export QT_AUTO_SCREEN_SCALE_FACTOR=0 # Выключаем авто-угадывание, оно на Иксах часто тупит
-export QT_SCREEN_SCALE_FACTORS=3    # Принудительно задаем масштаб 3х для экрана
-export QT_FONT_DPI=200           # Явно прокидываем DPI для шрифтов Qt
-export FORCE_SCALE_FACTOR=3

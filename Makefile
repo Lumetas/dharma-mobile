@@ -71,3 +71,34 @@ uninstall:
 	rm -f ${DESTDIR}${PREFIX}/bin/${BIN_L}
 
 .PHONY: all options clean dist install uninstall
+
+
+DAEMON_SRC  = daemon/wake-daemon.sh
+DAEMON_BIN  = ${DESTDIR}${PREFIX}/bin/dharma-wake-daemon
+DAEMON_UNIT = ${DESTDIR}${PREFIX}/lib/systemd/user/dharma-wake-daemon.service
+DAEMON_CONF = ${DESTDIR}/etc/dharma/wake-daemon.conf
+
+reload_daemon:
+	-systemctl --user daemon-reload
+	-systemctl --user reset-failed dharma-wake-daemon 2>/dev/null
+
+install_daemon:
+	mkdir -p ${DESTDIR}${PREFIX}/bin
+	install -m755 ${MAKEFILE_DIR}/${DAEMON_SRC} ${DAEMON_BIN}
+	mkdir -p ${DESTDIR}${PREFIX}/lib/systemd/user
+	install -m644 ${MAKEFILE_DIR}/daemon/wake-daemon.service ${DAEMON_UNIT}
+	mkdir -p ${DESTDIR}/etc/dharma
+	@[ -f ${DAEMON_CONF} ] || install -m644 ${MAKEFILE_DIR}/daemon/wake-daemon.conf ${DAEMON_CONF}
+	@echo "installed."
+	@echo "  binary: ${DAEMON_BIN}"
+	@echo "  unit:   ${DAEMON_UNIT}"
+	@echo "  config: ${DAEMON_CONF}"
+	@echo "restart Dharma to start the daemon."
+
+uninstall_daemon:
+	rm -f ${DAEMON_BIN} ${DAEMON_UNIT} ${DAEMON_CONF}
+	-rmdir ${DESTDIR}/etc/dharma 2>/dev/null
+	@echo "uninstalled."
+	@echo "restart Dharma to stop the daemon."
+
+.PHONY: install_daemon uninstall_daemon

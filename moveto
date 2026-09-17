@@ -19,7 +19,9 @@ DEST="dharma-mobile/"
 
 rsync -av --update ./ "$HOST:~/$DEST" \
 	--exclude='*.o' \
-	--exclude='.git/'
+	--exclude='.git/' \
+	--exclude='dharma' \
+	--exclude='dharma-launcher'
 	#    --include='dharma.c' \
 	#    --include='config.h' \
 	#    --include='autostart' \

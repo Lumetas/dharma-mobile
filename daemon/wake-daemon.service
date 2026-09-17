@@ -1,0 +1,11 @@
+[Unit]
+Description=Dharma Wake Daemon
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dharma-wake-daemon
+Slice=wake.slice
+Restart=on-failure
+RestartSec=2
+PassEnvironment=TOUCHSCREEN DISPLAY XAUTHORITY
